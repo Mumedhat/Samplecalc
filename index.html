@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StudySize Pro</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Academic sample size calculator</p>
+      <h1>StudySize Pro</h1>
+    </div>
+    <div class="top-actions">
+      <button id="loadExample" class="ghost">Load example</button>
+      <button id="exportReport" class="primary">Export report</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="sidebar">
+      <nav aria-label="Calculator sections">
+        <button class="nav-item active" data-tab="calculator">Calculator</button>
+        <button class="nav-item" data-tab="literature">Literature</button>
+        <button class="nav-item" data-tab="upload">AI study scan</button>
+        <button class="nav-item" data-tab="report">Report</button>
+      </nav>
+      <section class="status-panel">
+        <p class="label">Current recommendation</p>
+        <strong id="sidebarN">Not calculated</strong>
+        <span id="sidebarDesign">Choose a design and calculate.</span>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <section class="tab active" id="calculator">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Universal designs</p>
+            <h2>Precision, power, and ethical feasibility</h2>
+          </div>
+          <button id="calculate" class="primary">Calculate sample size</button>
+        </div>
+
+        <div class="grid two">
+          <section class="panel">
+            <h3>Study context</h3>
+            <div class="field-grid">
+              <label>Study title <input id="studyTitle" value="Untitled academic study"></label>
+              <label>Research setting
+                <select id="studySetting">
+                  <option>In vivo</option>
+                  <option>In vitro</option>
+                  <option>Clinical / translational</option>
+                  <option>Observational</option>
+                </select>
+              </label>
+              <label>Primary endpoint <input id="endpoint" placeholder="e.g., cytokine level, viability %, tumor volume"></label>
+              <label>Study design
+                <select id="design"></select>
+              </label>
+              <label>Allocation ratio, control:treatment <input id="ratio" type="number" min="0.1" step="0.1" value="1"></label>
+              <label>Expected attrition / unusable data % <input id="attrition" type="number" min="0" max="80" step="1" value="10"></label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h3>Statistical assumptions</h3>
+            <div class="field-grid" id="paramFields"></div>
+            <div class="compact-grid">
+              <label>Alpha <input id="alpha" type="number" min="0.0001" max="0.2" step="0.005" value="0.05"></label>
+              <label>Power <input id="power" type="number" min="0.5" max="0.999" step="0.01" value="0.8"></label>
+              <label>Tail
+                <select id="tail">
+                  <option value="two">Two-sided</option>
+                  <option value="one">One-sided</option>
+                </select>
+              </label>
+              <label>Multiplicity-adjusted tests <input id="tests" type="number" min="1" step="1" value="1"></label>
+            </div>
+          </section>
+        </div>
+
+        <section class="results-band">
+          <div>
+            <p class="label">Required sample size</p>
+            <strong id="resultN">-</strong>
+            <span id="resultUnit">Run a calculation.</span>
+          </div>
+          <div>
+            <p class="label">Adjusted for attrition</p>
+            <strong id="adjustedN">-</strong>
+            <span id="attritionNote">Includes unusable specimens, dropouts, or failed cultures.</span>
+          </div>
+          <div>
+            <p class="label">Method</p>
+            <strong id="methodName">-</strong>
+            <span id="methodNote">Formula and assumptions will appear here.</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h3>Supported statistical tests and analyses</h3>
+          <div id="testLibrary" class="method-list"></div>
+        </section>
+      </section>
+
+      <section class="tab" id="literature">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Evidence-aware assumptions</p>
+            <h2>Similar studies and pooled effect estimates</h2>
+          </div>
+          <button id="addReference" class="ghost">Add study</button>
+        </div>
+        <section class="panel">
+          <div id="referenceList"></div>
+          <div class="literature-summary" id="literatureSummary"></div>
+        </section>
+      </section>
+
+      <section class="tab" id="upload">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Local AI-style analysis</p>
+            <h2>Upload or paste a protocol/manuscript</h2>
+          </div>
+          <button id="analyzeText" class="primary">Analyze study</button>
+        </div>
+        <section class="panel upload-panel">
+          <input id="fileInput" type="file" accept=".txt,.md,.docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+          <textarea id="studyText" placeholder="Paste abstract, methods, or sample size section here. TXT/MD files are extracted automatically. DOCX/PDF extraction runs in the browser when the bundled CDN libraries are available; pasted text remains the offline fallback."></textarea>
+          <div id="analysisOutput" class="analysis-output"></div>
+        </section>
+      </section>
+
+      <section class="tab" id="report">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Transparent output</p>
+            <h2>Analysis report preview</h2>
+          </div>
+          <button id="refreshReport" class="ghost">Refresh</button>
+        </div>
+        <article id="reportPreview" class="report-preview"></article>
+      </section>
+    </section>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
