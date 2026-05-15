@@ -315,30 +315,48 @@ function analyzeStudyText() {
   }
   const lower = text.toLowerCase();
   const inferred = [];
-  if (/animal|mice|mouse|rat|rabbit|in vivo|tumou?r volume|body weight/.test(lower)) inferred.push("In vivo");
+  if (/\banimal\b|\bmice\b|\bmouse\b|\brats?\b|\brabbits?\b|\bin vivo\b|tumou?r volume|body weight/.test(lower)) inferred.push("In vivo");
   if (/cell|culture|well|plate|viability|mtt|western blot|pcr|elisa|in vitro/.test(lower)) inferred.push("In vitro");
-  if (/survival|hazard|kaplan|cox|log-rank|mortality/.test(lower)) setDesign("survival");
-  else if (/sensitivity|specificity|diagnostic|roc|auc/.test(lower)) setDesign("diagnostic");
-  else if (/correlation|pearson|spearman/.test(lower)) setDesign("correlation");
-  else if (/anova|three groups|multiple groups|dose/.test(lower)) setDesign("anova");
-  else if (/proportion|prevalence|response rate|percentage/.test(lower)) setDesign("twoProportions");
-  else if (/paired|before and after|pre-post|within-subject/.test(lower)) setDesign("pairedMeans");
-  else setDesign("twoMeans");
+  const designKey = inferDesignKey(lower);
+  setDesign(designKey);
 
-  const nums = extractParameters(text);
+  const nums = extractParameters(text, designKey);
+  const applied = {};
   Object.entries(nums).forEach(([key, value]) => {
     const input = $(`param_${key}`);
-    if (input) input.value = value;
+    if (input) {
+      input.value = value;
+      applied[key] = value;
+    }
   });
-  if (nums.alpha) $("alpha").value = nums.alpha;
-  if (nums.power) $("power").value = nums.power;
+  if (nums.alpha) { $("alpha").value = nums.alpha; applied.alpha = nums.alpha; }
+  if (nums.power) { $("power").value = nums.power; applied.power = nums.power; }
+  if (nums.attrition) { $("attrition").value = nums.attrition; applied.attrition = nums.attrition; }
+  if (nums.ratio) { $("ratio").value = nums.ratio; applied.ratio = nums.ratio; }
   calculate();
   const suggestions = generateSuggestions(lower);
+  const assumptions = getActiveAssumptions();
   $("analysisOutput").innerHTML = `
     <strong>Detected:</strong> ${inferred.length ? inferred.join(", ") : "General academic study"}; ${designs[$("design").value].name}.
-    <br><strong>Extracted parameters:</strong> ${Object.keys(nums).length ? Object.entries(nums).map(([k,v]) => `${k}=${v}`).join(", ") : "No direct numeric assumptions found; defaults retained."}
+    <br><strong>Applied extracted parameters:</strong> ${Object.keys(applied).length ? Object.entries(applied).map(([k,v]) => `${k}=${v}`).join(", ") : "No direct numeric assumptions found; calculator defaults retained."}
+    <br><strong>Assumptions used for this calculation:</strong> ${assumptions.map(([k,v]) => `${k}=${v}`).join(", ")}
     <br><strong>AI suggestions:</strong><ul>${suggestions.map(s => `<li>${s}</li>`).join("")}</ul>
   `;
+}
+
+function inferDesignKey(lower) {
+  if (/survival|hazard|kaplan|cox|log-rank|mortality|time-to-event/.test(lower)) return "survival";
+  if (/sensitivity|specificity|diagnostic|roc|auc/.test(lower)) return "diagnostic";
+  if (/correlation|pearson|spearman/.test(lower)) return "correlation";
+  if (/non.?inferiority|equivalence|equivalent/.test(lower)) return "equivalence";
+  if (/regression|predictors?|logistic|multivariable|cox model/.test(lower)) return "regression";
+  if (/resource equation|error degrees of freedom|target e/.test(lower)) return "animalResource";
+  if (/anova|three groups|multiple groups|dose|doses|more than two groups|between groups/.test(lower)) return "anova";
+  if (/prevalence|precision|margin of error|confidence interval width/.test(lower) && /proportion|rate|percentage|%/.test(lower)) return "oneProportionPrecision";
+  if (/proportion|prevalence|response rate|percentage endpoint|success rate|viability|mortality proportion|incidence proportion|binary outcome|categorical outcome/.test(lower)) return "twoProportions";
+  if (/paired|before and after|pre-post|pretest|posttest|within-subject|matched/.test(lower)) return "pairedMeans";
+  if (/precision|margin of error|confidence interval width/.test(lower)) return "oneMeanPrecision";
+  return "twoMeans";
 }
 
 function setDesign(key) {
@@ -346,21 +364,182 @@ function setDesign(key) {
   renderParamFields();
 }
 
-function extractParameters(text) {
+function extractParameters(text, designKey) {
   const lower = text.toLowerCase();
   const out = {};
-  const power = lower.match(/(?:power|1-?β|1-?beta)[^\d]{0,20}(0\.\d+|[5-9]\d(?:\.\d+)?%)/);
-  const alpha = lower.match(/(?:alpha|α|significance)[^\d]{0,20}(0\.\d+)/);
-  const sd = lower.match(/(?:sd|standard deviation)[^\d]{0,20}(\d+(?:\.\d+)?)/);
-  const diff = lower.match(/(?:difference|effect|delta|mean difference)[^\d]{0,20}(\d+(?:\.\d+)?)/);
-  const pcts = [...lower.matchAll(/(\d+(?:\.\d+)?)%/g)].map(m => Number(m[1]) / 100).filter(n => n > 0 && n < 1);
-  if (power) out.power = String(power[1]).includes("%") ? Number(String(power[1]).replace("%","")) / 100 : Number(power[1]);
-  if (alpha) out.alpha = Number(alpha[1]);
-  if (sd) out.sd = Number(sd[1]);
-  if (diff) out.delta = Number(diff[1]);
-  if (pcts.length >= 2 && $("design").value === "twoProportions") { out.p1 = pcts[0]; out.p2 = pcts[1]; }
-  if (pcts.length >= 1 && $("design").value === "oneProportionPrecision") out.p = pcts[0];
+  const power = matchValue(lower, [
+    /(?:power|1-?β|1-?beta)[^\d]{0,30}(0\.\d+|[5-9]\d(?:\.\d+)?%?)/,
+    /(\d+(?:\.\d+)?)%\s+power/
+  ]);
+  const alpha = matchValue(lower, [
+    /(?:alpha|α|significance|type i error)[^\d]{0,30}(0\.\d+|\d+(?:\.\d+)?%)/,
+    /(?:p\s*[<≤=]\s*)(0\.\d+)/
+  ]);
+  const attrition = matchValue(lower, [/(?:attrition|dropout|loss to follow-up|failed cultures?|unusable specimens?|missing data)[^\d]{0,30}(\d+(?:\.\d+)?%?)/]);
+  const ratio = lower.match(/(?:allocation ratio|randomi[sz]ed)\D{0,30}(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)/);
+  if (power) out.power = normalizePercent(power);
+  if (alpha) out.alpha = normalizePercent(alpha);
+  if (attrition) out.attrition = Math.min(80, normalizePercent(attrition) * 100);
+  if (ratio) out.ratio = Number(ratio[2]) / Number(ratio[1]);
+
+  const sd = matchValue(lower, [
+    /(?:standard deviation|sd|s\.d\.|common sd|pooled sd)[^\d]{0,30}(\d+(?:\.\d+)?)/,
+    /(\d+(?:\.\d+)?)\s*(?:mm3|mg|ng\/ml|pg\/ml|%|units?)?\s*(?:standard deviation|sd|s\.d\.)/
+  ]);
+  const margin = matchValue(lower, [
+    /(?:margin of error|precision|half-width|ci half-width|non.?inferiority margin|equivalence margin|margin)[^\d]{0,30}(\d+(?:\.\d+)?%?)/,
+    /(?:within|±|\+\/-)\s*(\d+(?:\.\d+)?%?)/
+  ]);
+  const diff = matchValue(lower, [
+    /(?:mean difference|clinically meaningful difference|minimal important difference|expected difference|delta|difference of)[^\d]{0,30}(\d+(?:\.\d+)?)/,
+    /(?:effect|change|reduction|increase)[^\d]{0,30}(\d+(?:\.\d+)?)/
+  ]);
+  const groupMeans = extractGroupMeans(lower);
+
+  if (["twoMeans", "pairedMeans", "oneMeanPrecision", "equivalence"].includes(designKey) && sd) out.sd = Number(sd);
+  if (designKey === "pairedMeans" && sd) out.sdDiff = Number(sd);
+  if (["twoMeans", "pairedMeans"].includes(designKey)) {
+    if (diff) out.delta = Number(diff);
+    else if (groupMeans.length >= 2) out.delta = round(Math.abs(groupMeans[1] - groupMeans[0]), 3);
+  }
+  if (["oneMeanPrecision", "oneProportionPrecision", "diagnostic", "equivalence"].includes(designKey) && margin) {
+    const value = String(margin).includes("%") || Number(margin) <= 1 ? normalizePercent(margin) : Number(margin);
+    out.margin = value;
+  }
+  if (designKey === "equivalence") {
+    const trueDiff = matchValue(lower, [/(?:true difference|expected true difference|assumed difference)[^\d-]{0,30}(-?\d+(?:\.\d+)?)/]);
+    if (trueDiff) out.trueDiff = Number(trueDiff);
+  }
+
+  const pcts = extractRelevantPercentages(lower);
+  if (designKey === "twoProportions") {
+    const control = extractPercentAfterKeyword(lower, ["control", "placebo", "untreated", "baseline"]);
+    const treatment = extractPercentAfterKeyword(lower, ["treatment", "treated", "intervention", "experimental", "test group"]);
+    if (control && treatment) {
+      out.p1 = normalizePercent(control);
+      out.p2 = normalizePercent(treatment);
+    } else if (pcts.length >= 2) {
+      out.p1 = pcts[0];
+      out.p2 = pcts[1];
+    }
+  }
+  if (designKey === "oneProportionPrecision" && pcts.length >= 1) out.p = pcts[0];
+
+  if (designKey === "correlation") {
+    const r = matchValue(lower, [/(?:correlation|pearson|spearman|r\s*=)[^\d-]{0,30}(-?0?\.\d+)/]);
+    if (r) out.r = Math.min(0.99, Math.max(-0.99, Math.abs(Number(r))));
+  }
+  if (designKey === "anova") {
+    const groups = matchValue(lower, [/(?:groups|arms|doses)[^\d]{0,20}(\d+)/, /(\d+)\s+(?:groups|arms|doses)/]);
+    const f = matchValue(lower, [/(?:cohen'?s?\s*f|effect size f|f effect size)[^\d]{0,20}(0?\.\d+)/]);
+    const eta = matchValue(lower, [/(?:eta squared|η2|eta2)[^\d]{0,20}(0?\.\d+)/]);
+    if (groups) out.groups = Math.max(2, Math.round(Number(groups)));
+    if (f) out.f = Number(f);
+    else if (eta) out.f = round(Math.sqrt(Number(eta) / Math.max(0.001, 1 - Number(eta))), 3);
+  }
+  if (designKey === "survival") {
+    const hr = matchValue(lower, [/(?:hazard ratio|hr)[^\d]{0,20}(0?\.\d+|\d+(?:\.\d+)?)/]);
+    const eventRate = matchValue(lower, [/(?:event rate|event probability|mortality|incidence)[^\d]{0,30}(\d+(?:\.\d+)?%?)/]);
+    if (hr) out.hr = Math.max(0.05, Math.min(5, Number(hr)));
+    if (eventRate) out.eventRate = normalizePercent(eventRate);
+  }
+  if (designKey === "diagnostic") {
+    const sensitivity = matchValue(lower, [/(?:sensitivity|sens)[^\d]{0,30}(\d+(?:\.\d+)?%?|0?\.\d+)/]);
+    const specificity = matchValue(lower, [/(?:specificity|spec)[^\d]{0,30}(\d+(?:\.\d+)?%?|0?\.\d+)/]);
+    if (sensitivity) out.sensitivity = normalizePercent(sensitivity);
+    if (specificity) out.specificity = normalizePercent(specificity);
+  }
+  if (designKey === "regression") {
+    const predictors = matchValue(lower, [/(?:predictors|covariates|variables|parameters)[^\d]{0,20}(\d+)/, /(\d+)\s+(?:predictors|covariates|variables)/]);
+    const epp = matchValue(lower, [/(?:events per predictor|events per variable|epv|observations per predictor)[^\d]{0,20}(\d+)/]);
+    const eventRate = matchValue(lower, [/(?:event rate|outcome rate|prevalence|incidence)[^\d]{0,30}(\d+(?:\.\d+)?%?)/]);
+    if (predictors) out.predictors = Math.max(1, Math.round(Number(predictors)));
+    if (epp) out.eventsPerPredictor = Math.max(5, Math.round(Number(epp)));
+    if (eventRate) out.eventRate = normalizePercent(eventRate);
+  }
+  if (designKey === "animalResource") {
+    const groups = matchValue(lower, [/(?:groups|arms)[^\d]{0,20}(\d+)/, /(\d+)\s+(?:groups|arms)/]);
+    const targetE = matchValue(lower, [/(?:target e|error degrees of freedom|resource equation e)[^\d]{0,20}(\d+)/]);
+    if (groups) out.groups = Math.max(2, Math.round(Number(groups)));
+    if (targetE) out.targetE = Math.max(5, Math.round(Number(targetE)));
+  }
   return out;
+}
+
+function matchValue(text, patterns) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function normalizePercent(value) {
+  const raw = String(value).trim();
+  const number = Number(raw.replace("%", ""));
+  if (!isFinite(number)) return 0;
+  return raw.includes("%") || number > 1 ? number / 100 : number;
+}
+
+function extractRelevantPercentages(text) {
+  const mentions = [];
+  for (const match of text.matchAll(/(\d+(?:\.\d+)?)%/g)) {
+    const start = Math.max(0, match.index - 35);
+    const end = Math.min(text.length, match.index + 35);
+    const context = text.slice(start, end);
+    if (/power|alpha|significance|confidence|attrition|dropout|loss|missing|sd|standard deviation/.test(context)) continue;
+    const value = Number(match[1]) / 100;
+    if (value > 0 && value < 1) mentions.push(value);
+  }
+  return mentions;
+}
+
+function extractPercentAfterKeyword(text, keywords) {
+  for (const keyword of keywords) {
+    const index = text.indexOf(keyword);
+    if (index === -1) continue;
+    const snippet = text.slice(index, index + 90);
+    const match = snippet.match(/(\d+(?:\.\d+)?)%/);
+    if (match) return match[0];
+  }
+  return null;
+}
+
+function extractGroupMeans(text) {
+  const means = [];
+  const control = extractMeanAfterKeyword(text, ["control", "placebo", "untreated", "baseline"]);
+  const treatment = extractMeanAfterKeyword(text, ["treatment", "treated", "intervention", "experimental"]);
+  if (control !== null) means.push(control);
+  if (treatment !== null) means.push(treatment);
+  if (means.length >= 2) return means;
+  return [...text.matchAll(/(?:mean|average)[^\d-]{0,20}(-?\d+(?:\.\d+)?)/g)].map(match => Number(match[1])).slice(0, 2);
+}
+
+function extractMeanAfterKeyword(text, keywords) {
+  for (const keyword of keywords) {
+    const index = text.indexOf(keyword);
+    if (index === -1) continue;
+    const snippet = text.slice(index, index + 100);
+    const match = snippet.match(/(?:mean|average)[^\d-]{0,20}(-?\d+(?:\.\d+)?)/);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+function getActiveAssumptions() {
+  const params = getParams();
+  const fields = designs[$("design").value].fields.map(([key]) => [key, params[key]]);
+  return [
+    ...fields,
+    ["alpha", params.rawAlpha],
+    ["power", params.power],
+    ["attrition", `${params.attrition}%`]
+  ];
+}
+
+function round(value, places) {
+  const factor = Math.pow(10, places);
+  return Math.round(value * factor) / factor;
 }
 
 function generateSuggestions(lower) {
@@ -371,7 +550,7 @@ function generateSuggestions(lower) {
   if (!/attrition|dropout|failed|missing/.test(lower)) list.push("Justify attrition, failed cultures, unusable specimens, and missing-data handling.");
   if (!/effect size|standard deviation|pilot|previous|literature/.test(lower)) list.push("Ground the effect size and variance in pilot data or closely similar studies.");
   if (/cell|culture|well|plate/.test(lower)) list.push("Separate biological replicates from technical replicates; sample size should usually count independent biological units.");
-  if (/animal|mice|rat|in vivo/.test(lower)) list.push("Report 3Rs justification, humane endpoints, sex/strain, housing blocks, and cage-level clustering risk.");
+  if (/\banimal\b|\bmice\b|\brats?\b|\bin vivo\b/.test(lower)) list.push("Report 3Rs justification, humane endpoints, sex/strain, housing blocks, and cage-level clustering risk.");
   return list;
 }
 
