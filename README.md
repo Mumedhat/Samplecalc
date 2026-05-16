@@ -20,7 +20,9 @@ Open `index.html` in a browser.
   - regression events-per-parameter planning
   - in vivo animal resource equation
 - Literature-aware reference table with weighted and conservative effect-size summaries.
-- Study text analysis that detects study setting, design, likely parameters, and study-strengthening suggestions.
+- Consensus-style study text analysis that detects study setting, design, likely parameters, missing assumptions, and study-strengthening suggestions.
+- Similar-study search links for PubMed, Semantic Scholar, and Google Scholar, plus design-matched candidate references that can be added to the evidence table.
+- Hover question-mark help beside calculator, literature, upload, and report controls.
 - TXT/MD upload extraction offline.
 - DOCX and PDF extraction in-browser when the CDN libraries load.
 - Exportable HTML report that can be printed or saved as PDF from the browser.

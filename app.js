@@ -133,8 +133,77 @@ const foundationalReferences = [
   "Percie du Sert N, et al. The ARRIVE guidelines 2.0: updated guidelines for reporting animal research. PLoS Biol. 2020;18(7):e3000410."
 ];
 
+const helpText = {
+  studyTitle: "A short title for the study. It appears in the exported sample size report.",
+  studySetting: "The research setting changes the interpretation of experimental units, replicates, attrition, and ethics requirements.",
+  endpoint: "The primary endpoint is the main outcome used for sample size planning. Use one clearly defined primary endpoint when possible.",
+  design: "Choose the statistical design that matches the primary endpoint and hypothesis. The AI scan can change this automatically.",
+  ratio: "Allocation ratio entered as control:treatment. Use 1 for equal allocation, 2 for twice as many treatment units as controls.",
+  attrition: "Expected percentage of animals, subjects, specimens, cultures, or assays that may be lost or unusable.",
+  alpha: "Type I error rate. 0.05 is common; smaller values are used for multiplicity or stricter confirmatory studies.",
+  power: "Probability of detecting the planned effect if it truly exists. Common values are 0.80 or 0.90.",
+  tail: "Two-sided tests detect effects in either direction. One-sided tests should only be used with strong protocol justification.",
+  tests: "Number of primary hypothesis tests to adjust for. The app uses a simple Bonferroni alpha adjustment.",
+  fileInput: "Upload TXT, MD, DOCX, or PDF study material. Text extraction quality depends on the source document.",
+  studyText: "Paste the abstract, methods, sample size paragraph, or protocol text. More explicit assumptions improve automatic calculation.",
+  analyzeText: "Runs the consensus study scan, applies extracted assumptions, checks missing values, and recalculates the sample size.",
+  loadExample: "Loads a worked in vivo example so you can see the workflow.",
+  exportReport: "Exports the current calculation, references, consensus analysis, and suggestions as an HTML report.",
+  addReference: "Adds a similar study manually. Enter citation, design, effect size, sample size, and notes.",
+  findSimilar: "Generates targeted literature searches and local reference candidates based on the uploaded study and current endpoint.",
+  literatureQuery: "Terms used to search for similar studies. Auto-filled from the endpoint, setting, and detected design.",
+  citation: "Citation, DOI, PubMed link, or URL for a similar study used to support assumptions.",
+  effect: "Comparable effect size from the similar study. Use standardized mean difference, Cohen's f, correlation, hazard ratio, or absolute proportion difference as appropriate.",
+  referenceN: "Total sample size or relevant group/sample count from the similar study.",
+  referenceNotes: "Short note about endpoint similarity, population/model, assay, treatment, or limitations.",
+  refreshReport: "Refreshes the report preview after changing assumptions or references.",
+  calculate: "Calculates the sample size using the current design and assumptions.",
+  delta: "Smallest clinically or biologically meaningful difference between groups.",
+  sd: "Expected common standard deviation for a continuous endpoint.",
+  sdDiff: "Standard deviation of within-pair differences for paired or repeated measurements.",
+  margin: "Desired confidence interval half-width or equivalence/non-inferiority margin, depending on the selected design.",
+  p1: "Expected control-group proportion, such as response, viability, mortality, or prevalence.",
+  p2: "Expected treatment-group proportion.",
+  p: "Expected single proportion for precision planning.",
+  r: "Expected absolute correlation coefficient.",
+  groups: "Number of experimental groups, study arms, or dose groups.",
+  f: "Cohen's f effect size for ANOVA. Literature or pilot estimates are preferred.",
+  trueDiff: "Expected true difference between groups for equivalence or non-inferiority planning.",
+  hr: "Expected hazard ratio for time-to-event analysis.",
+  eventRate: "Expected probability of observing the event during follow-up.",
+  sensitivity: "Expected diagnostic sensitivity among positive or diseased cases.",
+  specificity: "Expected diagnostic specificity among negative or non-diseased cases.",
+  predictors: "Number of candidate predictors in the regression model.",
+  eventsPerPredictor: "Minimum events or observations planned per model parameter.",
+  targetE: "Target error degrees of freedom for the animal resource equation. Common planning range is 10 to 20."
+};
+
+const literatureSeeds = {
+  twoMeans: [
+    { citation: "Festing MF, Altman DG. Guidelines for the design and statistical analysis of experiments using laboratory animals. ILAR J. 2002;43(4):244-258.", design: "Two independent means", effect: 0.6, n: 40, notes: "Animal experiment design and group comparison planning." },
+    { citation: "Charan J, Kantharia ND. How to calculate sample size in animal studies? J Pharmacol Pharmacother. 2013;4(4):303-306.", design: "Two independent means", effect: 0.7, n: 30, notes: "Animal-study sample size overview with effect-size planning." }
+  ],
+  anova: [
+    { citation: "Cohen J. Statistical Power Analysis for the Behavioral Sciences. 2nd ed. Lawrence Erlbaum; 1988.", design: "One-way ANOVA", effect: 0.25, n: 159, notes: "Canonical medium Cohen's f benchmark for ANOVA." },
+    { citation: "Festing MF. Design and statistical methods in studies using animal models of development. ILAR J. 2006;47(1):5-14.", design: "One-way ANOVA", effect: 0.3, n: 80, notes: "Experimental design considerations for animal-model group comparisons." }
+  ],
+  twoProportions: [
+    { citation: "Fleiss JL, Levin B, Paik MC. Statistical Methods for Rates and Proportions. 3rd ed. Wiley; 2003.", design: "Two independent proportions", effect: 0.2, n: 200, notes: "Reference methods for comparing rates and proportions." },
+    { citation: "Chow SC, Shao J, Wang H, Lokhnygina Y. Sample Size Calculations in Clinical Research. 3rd ed. Chapman and Hall/CRC; 2017.", design: "Two independent proportions", effect: 0.15, n: 300, notes: "Clinical and translational proportion comparison planning." }
+  ],
+  survival: [
+    { citation: "Schoenfeld DA. Sample-size formula for the proportional-hazards regression model. Biometrics. 1983;39(2):499-503.", design: "Survival / time-to-event", effect: 0.7, n: 100, notes: "Foundational event-based survival sample size method." },
+    { citation: "Freedman LS. Tables of the number of patients required in clinical trials using the logrank test. Stat Med. 1982;1(2):121-129.", design: "Survival / time-to-event", effect: 0.65, n: 120, notes: "Log-rank sample size planning reference." }
+  ],
+  diagnostic: [
+    { citation: "Buderer NMF. Incorporating prevalence into sample size calculation for sensitivity and specificity. Acad Emerg Med. 1996;3(9):895-900.", design: "Diagnostic sensitivity / specificity", effect: 0.85, n: 250, notes: "Diagnostic accuracy sample size method." },
+    { citation: "Flahault A, Cadilhac M, Thomas G. Sample size calculation should be performed for design accuracy in diagnostic test studies. J Clin Epidemiol. 2005;58(8):859-862.", design: "Diagnostic sensitivity / specificity", effect: 0.9, n: 200, notes: "Diagnostic test design accuracy planning." }
+  ]
+};
+
 let state = {
   lastResult: null,
+  lastConsensus: null,
   references: [
     { citation: "Example: prior in vivo efficacy study", design: "Two independent means", effect: 0.67, n: 36, notes: "Standardized mean difference from published group comparison." },
     { citation: "Example: in vitro dose-response study", design: "One-way ANOVA", effect: 0.25, n: 48, notes: "Moderate Cohen's f from viability assay." }
@@ -151,6 +220,7 @@ function init() {
   renderParamFields();
   renderReferences();
   calculate();
+  enhanceHelp();
 }
 
 function bindEvents() {
@@ -166,6 +236,7 @@ function bindEvents() {
   $("analyzeText").addEventListener("click", analyzeStudyText);
   $("loadExample").addEventListener("click", loadExample);
   $("fileInput").addEventListener("change", handleFile);
+  $("findSimilar").addEventListener("click", findSimilarStudies);
 }
 
 function setTab(tab) {
@@ -177,8 +248,33 @@ function setTab(tab) {
 function renderParamFields() {
   const design = designs[$("design").value];
   $("paramFields").innerHTML = design.fields.map(([key, label, value]) =>
-    `<label>${label}<input id="param_${key}" type="number" step="0.001" value="${value}"></label>`
+    `<label><span class="label-line">${label}${helpButton(key)}</span><input id="param_${key}" type="number" step="0.001" value="${value}"></label>`
   ).join("");
+}
+
+function helpButton(key) {
+  const text = helpText[key] || "This element affects study planning, analysis, or reporting.";
+  return `<button type="button" class="help" aria-label="Help" data-help="${escapeAttr(text)}">?</button>`;
+}
+
+function enhanceHelp() {
+  Object.entries(helpText).forEach(([id, text]) => {
+    const element = $(id);
+    if (!element || element.dataset.helpReady) return;
+    const label = element.closest ? element.closest("label") : null;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "help";
+    button.setAttribute("aria-label", "Help");
+    button.dataset.help = text;
+    button.textContent = "?";
+    if (label && !label.querySelector(".help")) {
+      label.insertBefore(button, element);
+    } else if (element.parentNode) {
+      element.insertAdjacentElement("afterend", button);
+    }
+    element.dataset.helpReady = "true";
+  });
 }
 
 function getParams() {
@@ -224,11 +320,11 @@ function formatResult(result, compact) {
 function renderReferences() {
   $("referenceList").innerHTML = state.references.map((ref, i) => `
     <div class="reference-row">
-      <label>Citation / DOI / URL <input data-ref="${i}" data-field="citation" value="${escapeAttr(ref.citation)}"></label>
-      <label>Design <input data-ref="${i}" data-field="design" value="${escapeAttr(ref.design)}"></label>
-      <label>Effect size <input type="number" step="0.001" data-ref="${i}" data-field="effect" value="${ref.effect}"></label>
-      <label>Sample size <input type="number" step="1" data-ref="${i}" data-field="n" value="${ref.n}"></label>
-      <label>Notes <input data-ref="${i}" data-field="notes" value="${escapeAttr(ref.notes)}"></label>
+      <label><span class="label-line">Citation / DOI / URL${helpButton("citation")}</span><input data-ref="${i}" data-field="citation" value="${escapeAttr(ref.citation)}"></label>
+      <label><span class="label-line">Design${helpButton("design")}</span><input data-ref="${i}" data-field="design" value="${escapeAttr(ref.design)}"></label>
+      <label><span class="label-line">Effect size${helpButton("effect")}</span><input type="number" step="0.001" data-ref="${i}" data-field="effect" value="${ref.effect}"></label>
+      <label><span class="label-line">Sample size${helpButton("referenceN")}</span><input type="number" step="1" data-ref="${i}" data-field="n" value="${ref.n}"></label>
+      <label><span class="label-line">Notes${helpButton("referenceNotes")}</span><input data-ref="${i}" data-field="notes" value="${escapeAttr(ref.notes)}"></label>
       <button class="icon-btn" title="Remove reference" data-remove="${i}">x</button>
     </div>
   `).join("");
@@ -319,8 +415,11 @@ function analyzeStudyText() {
   if (/cell|culture|well|plate|viability|mtt|western blot|pcr|elisa|in vitro/.test(lower)) inferred.push("In vitro");
   const designKey = inferDesignKey(lower);
   setDesign(designKey);
+  resetPlanningDefaults();
 
-  const nums = extractParameters(text, designKey);
+  const extracted = extractParameters(text, designKey);
+  const consensus = buildConsensus(text, designKey, extracted);
+  const nums = applyLiteratureFallbacks(extracted, designKey, consensus);
   const applied = {};
   Object.entries(nums).forEach(([key, value]) => {
     const input = $(`param_${key}`);
@@ -336,12 +435,27 @@ function analyzeStudyText() {
   calculate();
   const suggestions = generateSuggestions(lower);
   const assumptions = getActiveAssumptions();
+  const missing = getMissingAssumptions(extracted, designKey);
+  state.lastConsensus = { ...consensus, missing, applied };
+  renderConsensus(consensus, missing);
+  if ($("literatureQuery")) $("literatureQuery").value = buildLiteratureQuery(text, designKey);
   $("analysisOutput").innerHTML = `
     <strong>Detected:</strong> ${inferred.length ? inferred.join(", ") : "General academic study"}; ${designs[$("design").value].name}.
     <br><strong>Applied extracted parameters:</strong> ${Object.keys(applied).length ? Object.entries(applied).map(([k,v]) => `${k}=${v}`).join(", ") : "No direct numeric assumptions found; calculator defaults retained."}
     <br><strong>Assumptions used for this calculation:</strong> ${assumptions.map(([k,v]) => `${k}=${v}`).join(", ")}
+    ${missing.length ? `<br><strong class="warning-list">Needs review:</strong> ${missing.join(", ")} were not explicit in the study text; any displayed value may be a default or literature-supported provisional assumption.` : ""}
     <br><strong>AI suggestions:</strong><ul>${suggestions.map(s => `<li>${s}</li>`).join("")}</ul>
   `;
+  findSimilarStudies();
+}
+
+function resetPlanningDefaults() {
+  $("alpha").value = 0.05;
+  $("power").value = 0.8;
+  $("tail").value = "two";
+  $("tests").value = 1;
+  $("ratio").value = 1;
+  $("attrition").value = 10;
 }
 
 function inferDesignKey(lower) {
@@ -357,6 +471,138 @@ function inferDesignKey(lower) {
   if (/paired|before and after|pre-post|pretest|posttest|within-subject|matched/.test(lower)) return "pairedMeans";
   if (/precision|margin of error|confidence interval width/.test(lower)) return "oneMeanPrecision";
   return "twoMeans";
+}
+
+function buildConsensus(text, designKey, extracted) {
+  const lower = text.toLowerCase();
+  const designVotes = [
+    { agent: "Design classifier", vote: designs[designKey].name, reason: "Matched endpoint and analysis keywords in the study text." },
+    { agent: "Outcome parser", vote: inferOutcomeFamily(lower), reason: "Classified the primary endpoint as continuous, categorical, diagnostic, survival, or model-based." },
+    { agent: "Assumption extractor", vote: `${Object.keys(extracted).length} numeric assumptions found`, reason: Object.keys(extracted).length ? Object.keys(extracted).join(", ") : "No explicit numeric planning values found." },
+    { agent: "Literature matcher", vote: `${getCandidateReferences(designKey).length} candidate references`, reason: "Matched by detected design and study setting; user should confirm biological/clinical similarity." }
+  ];
+  const required = getRequiredFields(designKey);
+  const present = required.filter(key => extracted[key] !== undefined);
+  const confidence = Math.round(((present.length / Math.max(1, required.length)) * 0.65 + Math.min(1, Object.keys(extracted).length / 5) * 0.35) * 100);
+  return {
+    designKey,
+    votes: designVotes,
+    confidence,
+    required,
+    present,
+    query: buildLiteratureQuery(text, designKey),
+    references: getCandidateReferences(designKey)
+  };
+}
+
+function inferOutcomeFamily(lower) {
+  if (/sensitivity|specificity|diagnostic|roc|auc/.test(lower)) return "Diagnostic accuracy endpoint";
+  if (/survival|hazard|log-rank|time-to-event/.test(lower)) return "Time-to-event endpoint";
+  if (/proportion|rate|viability|mortality|prevalence|binary/.test(lower)) return "Categorical/proportion endpoint";
+  if (/correlation|regression|predictor|covariate/.test(lower)) return "Association/model endpoint";
+  return "Continuous endpoint";
+}
+
+function getRequiredFields(designKey) {
+  return {
+    twoMeans: ["delta", "sd"],
+    pairedMeans: ["delta", "sdDiff"],
+    oneMeanPrecision: ["sd", "margin"],
+    twoProportions: ["p1", "p2"],
+    oneProportionPrecision: ["p", "margin"],
+    correlation: ["r"],
+    anova: ["groups", "f"],
+    equivalence: ["sd", "margin"],
+    survival: ["hr", "eventRate"],
+    diagnostic: ["sensitivity", "specificity", "margin"],
+    regression: ["predictors", "eventsPerPredictor", "eventRate"],
+    animalResource: ["groups", "targetE"]
+  }[designKey] || [];
+}
+
+function getMissingAssumptions(extracted, designKey) {
+  return getRequiredFields(designKey).filter(key => extracted[key] === undefined);
+}
+
+function applyLiteratureFallbacks(extracted, designKey, consensus) {
+  const out = { ...extracted };
+  const refs = getMatchingReferenceEffects(designKey);
+  const fallback = refs.length ? quantile(refs, 0.25) : null;
+  if (fallback === null) return out;
+  if ((designKey === "twoMeans" || designKey === "pairedMeans") && out.sd && !out.delta) out.delta = round(out.sd * fallback, 3);
+  if (designKey === "anova" && !out.f) out.f = round(fallback, 3);
+  if (designKey === "correlation" && !out.r) out.r = Math.min(0.99, Math.abs(round(fallback, 3)));
+  if (designKey === "survival" && !out.hr && fallback > 0 && fallback < 1) out.hr = round(fallback, 3);
+  if (consensus) consensus.literatureFallback = fallback;
+  return out;
+}
+
+function getMatchingReferenceEffects(designKey) {
+  const designName = designs[designKey].name.toLowerCase();
+  return state.references
+    .filter(ref => String(ref.design || "").toLowerCase().includes(designName.split(" ")[0]) || designName.includes(String(ref.design || "").toLowerCase().split(" ")[0]))
+    .map(ref => Number(ref.effect))
+    .filter(value => isFinite(value) && value > 0);
+}
+
+function getCandidateReferences(designKey) {
+  return literatureSeeds[designKey] || literatureSeeds.twoMeans;
+}
+
+function renderConsensus(consensus, missing) {
+  $("consensusOutput").innerHTML = `
+    <strong>Consensus AI interpretation</strong>
+    <span class="tag">Confidence ${consensus.confidence}%</span>
+    ${consensus.literatureFallback ? `<span class="tag">Literature fallback effect ${consensus.literatureFallback}</span>` : ""}
+    <div class="consensus-grid">
+      ${consensus.votes.map(vote => `<div class="consensus-card"><strong>${escapeHtml(vote.agent)}</strong><span>${escapeHtml(vote.vote)}</span><p>${escapeHtml(vote.reason)}</p></div>`).join("")}
+    </div>
+    ${missing.length ? `<p class="warning-list"><strong>Missing explicit assumptions:</strong> ${missing.map(escapeHtml).join(", ")}. The calculation is provisional until these are confirmed from the protocol, pilot data, or similar studies.</p>` : "<p>All required assumptions for the selected design were found explicitly or derived from paired values.</p>"}
+  `;
+}
+
+function buildLiteratureQuery(text, designKey) {
+  const lower = text.toLowerCase();
+  const endpoint = $("endpoint")?.value || extractEndpointPhrase(lower);
+  const setting = $("studySetting")?.value || (/\bin vivo\b|\bmice\b|\brats?\b/.test(lower) ? "in vivo" : /in vitro|cell|culture/.test(lower) ? "in vitro" : "");
+  return [endpoint, setting, designs[designKey].name, "sample size", "effect size"].filter(Boolean).join(" ");
+}
+
+function extractEndpointPhrase(lower) {
+  const primary = lower.match(/primary (?:endpoint|outcome)[^\w]{0,10}([a-z0-9 %\/-]{4,60})/);
+  if (primary) return primary[1].trim();
+  if (/tumou?r volume/.test(lower)) return "tumor volume";
+  if (/viability/.test(lower)) return "cell viability";
+  if (/cytokine/.test(lower)) return "cytokine level";
+  if (/mortality/.test(lower)) return "mortality";
+  return "";
+}
+
+function findSimilarStudies() {
+  const designKey = $("design").value || "twoMeans";
+  const query = $("literatureQuery").value.trim() || buildLiteratureQuery($("studyText").value || "", designKey);
+  $("literatureQuery").value = query;
+  const encoded = encodeURIComponent(query);
+  const candidates = getCandidateReferences(designKey);
+  $("similarStudies").innerHTML = `
+    <strong>Consensus literature search</strong>
+    <p>Open these searches, choose studies with the closest endpoint/model/assay, then add their effect size and sample size below. The app uses matching entered references as literature support for provisional assumptions.</p>
+    <p>
+      <a class="tag" target="_blank" rel="noreferrer" href="https://pubmed.ncbi.nlm.nih.gov/?term=${encoded}">PubMed</a>
+      <a class="tag" target="_blank" rel="noreferrer" href="https://www.semanticscholar.org/search?q=${encoded}">Semantic Scholar</a>
+      <a class="tag" target="_blank" rel="noreferrer" href="https://scholar.google.com/scholar?q=${encoded}">Google Scholar</a>
+    </p>
+    <div class="similar-grid">
+      ${candidates.map((ref, index) => `<div class="study-card"><strong>${escapeHtml(ref.citation)}</strong><span>${escapeHtml(ref.notes)}</span><p><span class="tag">${escapeHtml(ref.design)}</span><span class="tag">effect ${ref.effect}</span><span class="tag">n ${ref.n}</span></p><button class="ghost" data-seed-ref="${index}">Use as reference</button></div>`).join("")}
+    </div>
+  `;
+  $("similarStudies").querySelectorAll("[data-seed-ref]").forEach(button => {
+    button.addEventListener("click", () => {
+      state.references.push({ ...candidates[Number(button.dataset.seedRef)] });
+      renderReferences();
+      renderLiteratureSummary();
+    });
+  });
 }
 
 function setDesign(key) {
@@ -392,7 +638,11 @@ function extractParameters(text, designKey) {
   ]);
   const diff = matchValue(lower, [
     /(?:mean difference|clinically meaningful difference|minimal important difference|expected difference|delta|difference of)[^\d]{0,30}(\d+(?:\.\d+)?)/,
-    /(?:effect|change|reduction|increase)[^\d]{0,30}(\d+(?:\.\d+)?)/
+    /(?:change|reduction|increase)[^\d]{0,30}(\d+(?:\.\d+)?)/
+  ]);
+  const smd = matchValue(lower, [
+    /(?:cohen'?s?\s*d|standardi[sz]ed mean difference|smd|effect size d)[^\d]{0,20}(0?\.\d+|\d+(?:\.\d+)?)/,
+    /(?:effect size)[^\d]{0,20}(0?\.\d+)/
   ]);
   const groupMeans = extractGroupMeans(lower);
 
@@ -400,6 +650,8 @@ function extractParameters(text, designKey) {
   if (designKey === "pairedMeans" && sd) out.sdDiff = Number(sd);
   if (["twoMeans", "pairedMeans"].includes(designKey)) {
     if (diff) out.delta = Number(diff);
+    else if (smd && sd) out.delta = round(Number(smd) * Number(sd), 3);
+    else if (smd) { out.delta = Number(smd); out.sd = 1; }
     else if (groupMeans.length >= 2) out.delta = round(Math.abs(groupMeans[1] - groupMeans[0]), 3);
   }
   if (["oneMeanPrecision", "oneProportionPrecision", "diagnostic", "equivalence"].includes(designKey) && margin) {
@@ -564,6 +816,7 @@ function renderReport() {
     <h3>Sample Size Recommendation</h3>
     <p>${formatResult(r.result, false)} before attrition. Adjusted total: <strong>${r.adjusted}</strong> with ${r.params.attrition}% attrition.</p>
     <p><strong>Design:</strong> ${r.design}. <strong>Method:</strong> ${r.note}</p>
+    ${state.lastConsensus ? `<h3>Consensus AI Review</h3><p><strong>Confidence:</strong> ${state.lastConsensus.confidence}%. <strong>Missing explicit assumptions:</strong> ${state.lastConsensus.missing.length ? state.lastConsensus.missing.map(escapeHtml).join(", ") : "None for the selected design"}.</p><ul>${state.lastConsensus.votes.map(vote => `<li><strong>${escapeHtml(vote.agent)}:</strong> ${escapeHtml(vote.vote)} - ${escapeHtml(vote.reason)}</li>`).join("")}</ul>` : ""}
     <table><tbody>
       <tr><th>Alpha</th><td>${r.params.rawAlpha}</td><th>Adjusted alpha</th><td>${r.params.alpha.toFixed(4)}</td></tr>
       <tr><th>Power</th><td>${r.params.power}</td><th>Tail</th><td>${r.params.tail}</td></tr>

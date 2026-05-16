@@ -115,6 +115,11 @@
           <button id="addReference" class="ghost">Add study</button>
         </div>
         <section class="panel">
+          <div class="search-row">
+            <label>Literature search terms <input id="literatureQuery" placeholder="Auto-filled from uploaded study or endpoint"></label>
+            <button id="findSimilar" class="primary">Find similar studies</button>
+          </div>
+          <div id="similarStudies" class="similar-studies"></div>
           <div id="referenceList"></div>
           <div class="literature-summary" id="literatureSummary"></div>
         </section>
@@ -131,6 +136,7 @@
         <section class="panel upload-panel">
           <input id="fileInput" type="file" accept=".txt,.md,.docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
           <textarea id="studyText" placeholder="Paste abstract, methods, or sample size section here. TXT/MD files are extracted automatically. DOCX/PDF extraction runs in the browser when the bundled CDN libraries are available; pasted text remains the offline fallback."></textarea>
+          <div id="consensusOutput" class="consensus-output"></div>
           <div id="analysisOutput" class="analysis-output"></div>
         </section>
       </section>
