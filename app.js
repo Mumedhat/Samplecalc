@@ -204,10 +204,7 @@ const literatureSeeds = {
 let state = {
   lastResult: null,
   lastConsensus: null,
-  references: [
-    { citation: "Example: prior in vivo efficacy study", design: "Two independent means", effect: 0.67, n: 36, notes: "Standardized mean difference from published group comparison." },
-    { citation: "Example: in vitro dose-response study", design: "One-way ANOVA", effect: 0.25, n: 48, notes: "Moderate Cohen's f from viability assay." }
-  ],
+  references: [],
   attachments: []
 };
 
@@ -403,22 +400,24 @@ async function extractPdf(file) {
   return chunks.join("\n\n");
 }
 
-function analyzeStudyText() {
+async function analyzeStudyText() {
   const text = $("studyText").value.trim();
   if (!text) {
     $("analysisOutput").innerHTML = "Paste study text or upload a TXT/MD file first.";
     return;
   }
   const lower = text.toLowerCase();
-  const inferred = [];
-  if (/\banimal\b|\bmice\b|\bmouse\b|\brats?\b|\brabbits?\b|\bin vivo\b|tumou?r volume|body weight/.test(lower)) inferred.push("In vivo");
-  if (/cell|culture|well|plate|viability|mtt|western blot|pcr|elisa|in vitro/.test(lower)) inferred.push("In vitro");
-  const designKey = inferDesignKey(lower);
+  $("analysisOutput").innerHTML = "<strong>Analyzing study...</strong> Reading protocol structure, endpoint, assumptions, and similar-study context.";
+  const cloud = await requestCloudAiAnalysis(text);
+  const protocol = cloud?.protocol || buildProtocolModel(text);
+  const designKey = protocol.designKey;
   setDesign(designKey);
   resetPlanningDefaults();
+  if (protocol.setting) $("studySetting").value = protocol.setting;
+  if (protocol.endpoint && !$("endpoint").value.trim()) $("endpoint").value = protocol.endpoint;
 
-  const extracted = extractParameters(text, designKey);
-  const consensus = buildConsensus(text, designKey, extracted);
+  const extracted = cloud?.assumptions || extractParameters(text, designKey);
+  const consensus = cloud ? buildCloudConsensus(cloud, protocol, extracted) : buildConsensus(text, designKey, extracted, protocol);
   const nums = applyLiteratureFallbacks(extracted, designKey, consensus);
   const applied = {};
   Object.entries(nums).forEach(([key, value]) => {
@@ -433,17 +432,22 @@ function analyzeStudyText() {
   if (nums.attrition) { $("attrition").value = nums.attrition; applied.attrition = nums.attrition; }
   if (nums.ratio) { $("ratio").value = nums.ratio; applied.ratio = nums.ratio; }
   calculate();
-  const suggestions = generateSuggestions(lower);
+  const suggestions = cloud?.suggestions?.length ? cloud.suggestions : generateSuggestions(lower);
   const assumptions = getActiveAssumptions();
-  const missing = getMissingAssumptions(extracted, designKey);
-  state.lastConsensus = { ...consensus, missing, applied };
-  renderConsensus(consensus, missing);
+  const missingExplicit = getMissingAssumptions(extracted, designKey);
+  const unresolved = getMissingAssumptions(nums, designKey);
+  const range = buildSensitivityRange(designKey, nums);
+  state.lastConsensus = { ...consensus, missing: missingExplicit, unresolved, applied, protocol, range, aiMode: cloud ? "OpenAI consensus" : "Local fallback" };
+  renderConsensus(consensus, missingExplicit, unresolved, range);
   if ($("literatureQuery")) $("literatureQuery").value = buildLiteratureQuery(text, designKey);
   $("analysisOutput").innerHTML = `
-    <strong>Detected:</strong> ${inferred.length ? inferred.join(", ") : "General academic study"}; ${designs[$("design").value].name}.
-    <br><strong>Applied extracted parameters:</strong> ${Object.keys(applied).length ? Object.entries(applied).map(([k,v]) => `${k}=${v}`).join(", ") : "No direct numeric assumptions found; calculator defaults retained."}
-    <br><strong>Assumptions used for this calculation:</strong> ${assumptions.map(([k,v]) => `${k}=${v}`).join(", ")}
-    ${missing.length ? `<br><strong class="warning-list">Needs review:</strong> ${missing.join(", ")} were not explicit in the study text; any displayed value may be a default or literature-supported provisional assumption.` : ""}
+    <strong>Analyzer:</strong> ${cloud ? "OpenAI multi-agent consensus" : "Local protocol-first fallback"}.
+    <br><strong>Protocol interpretation:</strong> ${escapeHtml(protocol.setting || "General study")} | ${escapeHtml(protocol.unit)} | ${escapeHtml(protocol.endpoint || "Endpoint not stated")} | ${escapeHtml(protocol.comparison)}.
+    <br><strong>Selected analysis:</strong> ${designs[$("design").value].name} because ${escapeHtml(protocol.reason)}.
+    <br><strong>Applied assumptions:</strong> ${Object.keys(applied).length ? Object.entries(applied).map(([k,v]) => `${k}=${v}`).join(", ") : "No explicit numeric assumptions found; defaults are only a placeholder."}
+    <br><strong>Values used in the calculator:</strong> ${assumptions.map(([k,v]) => `${k}=${v}`).join(", ")}
+    ${missingExplicit.length ? `<br><strong class="warning-list">Not explicit in study:</strong> ${missingExplicit.join(", ")}. ${unresolved.length ? "These still need user confirmation before the automatic calculation is credible." : "They were filled from literature or standardized-effect assumptions and must be confirmed."}` : ""}
+    ${range ? `<br><strong>Sensitivity range:</strong> ${escapeHtml(range.label)} = ${escapeHtml(range.low)} to ${escapeHtml(range.high)}.` : ""}
     <br><strong>AI suggestions:</strong><ul>${suggestions.map(s => `<li>${s}</li>`).join("")}</ul>
   `;
   findSimilarStudies();
@@ -456,6 +460,193 @@ function resetPlanningDefaults() {
   $("tests").value = 1;
   $("ratio").value = 1;
   $("attrition").value = 10;
+}
+
+async function requestCloudAiAnalysis(studyText) {
+  try {
+    const response = await fetch("/.netlify/functions/analyze-study", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        studyText,
+        endpoint: $("endpoint").value,
+        setting: $("studySetting").value,
+        references: state.references
+      })
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    if (!payload.aiAvailable || !payload.analysis) return null;
+    return normalizeCloudAnalysis(payload.analysis);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCloudAnalysis(analysis) {
+  const designKey = designs[analysis.protocol?.designKey] ? analysis.protocol.designKey : "twoMeans";
+  return {
+    protocol: {
+      setting: normalizeSetting(analysis.protocol?.setting),
+      unit: analysis.protocol?.experimentalUnit || "independent observation",
+      endpoint: analysis.protocol?.endpoint || "",
+      endpointType: analysis.protocol?.endpointType || "continuous",
+      comparison: analysis.protocol?.comparison || "two independent groups",
+      designKey,
+      reason: analysis.protocol?.reason || "selected by cloud consensus analyzer"
+    },
+    assumptions: cleanAssumptions(analysis.assumptions || {}),
+    missingAssumptions: Array.isArray(analysis.missingAssumptions) ? analysis.missingAssumptions : [],
+    agentReviews: Array.isArray(analysis.agentReviews) ? analysis.agentReviews : [],
+    similarStudyQueries: Array.isArray(analysis.similarStudyQueries) ? analysis.similarStudyQueries : [],
+    suggestions: Array.isArray(analysis.suggestions) ? analysis.suggestions : [],
+    warnings: Array.isArray(analysis.warnings) ? analysis.warnings : [],
+    confidence: Number(analysis.confidence || 0)
+  };
+}
+
+function normalizeSetting(setting) {
+  const value = String(setting || "").toLowerCase();
+  if (value.includes("vivo") || value.includes("animal")) return "In vivo";
+  if (value.includes("vitro") || value.includes("cell")) return "In vitro";
+  if (value.includes("clinical") || value.includes("patient")) return "Clinical / translational";
+  if (value.includes("observ")) return "Observational";
+  return setting || "";
+}
+
+function cleanAssumptions(raw) {
+  const out = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === "") return;
+    const number = Number(value);
+    if (isFinite(number)) out[key] = number;
+  });
+  return out;
+}
+
+function buildCloudConsensus(cloud, protocol, extracted) {
+  const required = getRequiredFields(protocol.designKey);
+  const present = required.filter(key => extracted[key] !== undefined);
+  const votes = cloud.agentReviews.length
+    ? cloud.agentReviews.map(review => ({
+        agent: review.agent,
+        vote: review.decision,
+        reason: review.rationale
+      }))
+    : [
+        { agent: "OpenAI consensus", vote: designs[protocol.designKey].name, reason: protocol.reason }
+      ];
+  return {
+    designKey: protocol.designKey,
+    protocol,
+    votes,
+    confidence: Math.round(Math.max(0, Math.min(100, cloud.confidence))),
+    required,
+    present,
+    query: cloud.similarStudyQueries?.[0]?.query || buildLiteratureQuery($("studyText").value, protocol.designKey),
+    references: getCandidateReferences(protocol.designKey),
+    warnings: cloud.warnings,
+    similarStudyQueries: cloud.similarStudyQueries
+  };
+}
+
+function buildProtocolModel(text) {
+  const lower = text.toLowerCase();
+  const endpoint = extractEndpointPhrase(lower) || extractMeasuredOutcome(lower);
+  const setting = inferSetting(lower);
+  const unit = inferExperimentalUnit(lower, setting);
+  const endpointType = inferEndpointType(lower);
+  const comparison = inferComparison(lower);
+  const designKey = selectDesignFromProtocol({ lower, endpointType, comparison, setting });
+  return {
+    setting,
+    unit,
+    endpoint,
+    endpointType,
+    comparison,
+    designKey,
+    reason: explainDesignChoice(designKey, endpointType, comparison)
+  };
+}
+
+function inferSetting(lower) {
+  if (/\bin vivo\b|\banimal\b|\bmice\b|\bmouse\b|\brats?\b|\brabbits?\b|tumou?r volume|body weight/.test(lower)) return "In vivo";
+  if (/in vitro|cell|culture|well|plate|viability|mtt|western blot|pcr|elisa|organoid|spheroid/.test(lower)) return "In vitro";
+  if (/patient|participant|clinical|trial|cohort|case-control|hospital/.test(lower)) return "Clinical / translational";
+  if (/survey|registry|cross-sectional|observational/.test(lower)) return "Observational";
+  return "";
+}
+
+function inferExperimentalUnit(lower, setting) {
+  if (/technical replicate|triplicate|duplicate/.test(lower) && /biological replicate/.test(lower)) return "biological replicate, not technical replicate";
+  if (/cage/.test(lower)) return "animal or cage, check clustering";
+  if (/\bmice\b|\bmouse\b|\brats?\b|\brabbits?\b|animal/.test(lower)) return "individual animal";
+  if (/cell line|culture|well|plate|organoid|spheroid/.test(lower)) return /biological replicate|independent experiment/.test(lower) ? "independent biological replicate" : "independent culture/experiment; wells alone are technical replicates";
+  if (/patient|participant|subject/.test(lower)) return "individual participant";
+  if (setting === "In vivo") return "individual animal/biological unit";
+  return setting === "In vitro" ? "independent biological replicate" : "independent observation";
+}
+
+function inferEndpointType(lower) {
+  if (/sensitivity|specificity|diagnostic|roc|auc/.test(lower)) return "diagnostic";
+  if (/survival|hazard|kaplan|cox|log-rank|time-to-event/.test(lower)) return "time-to-event";
+  if (/correlation|pearson|spearman/.test(lower)) return "correlation";
+  if (/regression|predictors?|logistic|multivariable|cox model/.test(lower)) return "model";
+  if (/proportion|prevalence|response rate|success rate|binary|categorical|yes\/no|mortality proportion/.test(lower)) return "proportion";
+  if (/viability|mortality|inhibition/.test(lower) && /%|percentage/.test(lower)) return "proportion";
+  return "continuous";
+}
+
+function inferComparison(lower) {
+  if (/paired|before and after|pre-post|within-subject|matched/.test(lower)) return "paired/repeated comparison";
+  if (/non.?inferiority|equivalence/.test(lower)) return "equivalence or non-inferiority hypothesis";
+  const groups = matchValue(lower, [/(?:groups|arms|doses)[^\d]{0,20}(\d+)/, /(\d+)\s+(?:groups|arms|doses)/]);
+  if (groups && Number(groups) > 2) return `${groups} independent groups`;
+  if (/control|placebo|untreated/.test(lower) && /treatment|treated|intervention|experimental/.test(lower)) return "two independent groups";
+  if (/single group|one group|estimate|precision|prevalence/.test(lower)) return "single estimate / precision";
+  return "two independent groups";
+}
+
+function selectDesignFromProtocol(model) {
+  const lower = model.lower;
+  if (model.endpointType === "time-to-event") return "survival";
+  if (model.endpointType === "diagnostic") return "diagnostic";
+  if (model.endpointType === "correlation") return "correlation";
+  if (/non.?inferiority|equivalence/.test(lower)) return "equivalence";
+  if (/resource equation|error degrees of freedom|target e/.test(lower)) return "animalResource";
+  if (model.endpointType === "model") return "regression";
+  if (/anova|three groups|multiple groups|dose|doses|more than two groups/.test(lower) || /^\d+ independent groups/.test(model.comparison)) return "anova";
+  if (model.endpointType === "proportion" && /single estimate|precision|prevalence/.test(model.comparison)) return "oneProportionPrecision";
+  if (model.endpointType === "proportion") return "twoProportions";
+  if (/paired|repeated/.test(model.comparison)) return "pairedMeans";
+  if (/single estimate|precision/.test(model.comparison)) return "oneMeanPrecision";
+  return "twoMeans";
+}
+
+function explainDesignChoice(designKey, endpointType, comparison) {
+  const reasons = {
+    twoMeans: "the endpoint appears continuous and the protocol compares two independent groups",
+    pairedMeans: "the endpoint appears continuous and measurements are paired or repeated within the same unit",
+    oneMeanPrecision: "the protocol is estimating a single continuous mean with desired precision",
+    twoProportions: "the endpoint appears binary/proportional and two independent groups are compared",
+    oneProportionPrecision: "the protocol is estimating one proportion or prevalence with desired precision",
+    correlation: "the stated analysis is a correlation/association between continuous or ordinal variables",
+    anova: "the protocol compares more than two groups or dose levels",
+    equivalence: "the hypothesis is equivalence or non-inferiority rather than superiority",
+    survival: "the endpoint is time-to-event or survival",
+    diagnostic: "the endpoint is diagnostic accuracy",
+    regression: "the plan is a multivariable prediction or regression model",
+    animalResource: "the protocol uses the animal resource equation"
+  };
+  return reasons[designKey] || `${endpointType} endpoint with ${comparison}`;
+}
+
+function extractMeasuredOutcome(lower) {
+  const patterns = [
+    /(?:measure|measured|assess|assessed|evaluate|evaluated|compare|compared)[^\.\n]{0,60}(tumou?r volume|cell viability|cytokine [a-z0-9-]+|body weight|glucose|protein expression|gene expression|absorbance|optical density)/,
+    /(tumou?r volume|cell viability|cytokine level|body weight|protein expression|gene expression|mortality|survival)/
+  ];
+  return matchValue(lower, patterns) || "";
 }
 
 function inferDesignKey(lower) {
@@ -473,19 +664,23 @@ function inferDesignKey(lower) {
   return "twoMeans";
 }
 
-function buildConsensus(text, designKey, extracted) {
+function buildConsensus(text, designKey, extracted, protocol) {
   const lower = text.toLowerCase();
   const designVotes = [
-    { agent: "Design classifier", vote: designs[designKey].name, reason: "Matched endpoint and analysis keywords in the study text." },
-    { agent: "Outcome parser", vote: inferOutcomeFamily(lower), reason: "Classified the primary endpoint as continuous, categorical, diagnostic, survival, or model-based." },
-    { agent: "Assumption extractor", vote: `${Object.keys(extracted).length} numeric assumptions found`, reason: Object.keys(extracted).length ? Object.keys(extracted).join(", ") : "No explicit numeric planning values found." },
-    { agent: "Literature matcher", vote: `${getCandidateReferences(designKey).length} candidate references`, reason: "Matched by detected design and study setting; user should confirm biological/clinical similarity." }
+    { agent: "Protocol reader", vote: protocol.endpoint || "Endpoint not stated", reason: `Experimental unit: ${protocol.unit}. Setting: ${protocol.setting || "not explicit"}.` },
+    { agent: "Hypothesis mapper", vote: protocol.comparison, reason: `Endpoint type: ${protocol.endpointType}.` },
+    { agent: "Statistical test selector", vote: designs[designKey].name, reason: protocol.reason },
+    { agent: "Assumption auditor", vote: `${Object.keys(extracted).length} extracted values`, reason: Object.keys(extracted).length ? Object.keys(extracted).join(", ") : "No explicit numeric planning values found." },
+    { agent: "Literature matcher", vote: `${getCandidateReferences(designKey).length} candidate references`, reason: "Matched by endpoint family and design; user must confirm biological/clinical similarity before final use." }
   ];
   const required = getRequiredFields(designKey);
   const present = required.filter(key => extracted[key] !== undefined);
-  const confidence = Math.round(((present.length / Math.max(1, required.length)) * 0.65 + Math.min(1, Object.keys(extracted).length / 5) * 0.35) * 100);
+  const protocolCompleteness = [protocol.endpoint, protocol.unit, protocol.comparison, protocol.endpointType].filter(Boolean).length / 4;
+  const assumptionCompleteness = present.length / Math.max(1, required.length);
+  const confidence = Math.round((protocolCompleteness * 0.35 + assumptionCompleteness * 0.5 + Math.min(1, Object.keys(extracted).length / 5) * 0.15) * 100);
   return {
     designKey,
+    protocol,
     votes: designVotes,
     confidence,
     required,
@@ -524,40 +719,132 @@ function getMissingAssumptions(extracted, designKey) {
   return getRequiredFields(designKey).filter(key => extracted[key] === undefined);
 }
 
+function buildSensitivityRange(designKey, paramsLike) {
+  const design = designs[designKey];
+  if (!design || getMissingAssumptions(paramsLike, designKey).length) return null;
+  const base = {
+    alpha: paramsLike.alpha || Number($("alpha").value) || 0.05,
+    rawAlpha: paramsLike.alpha || Number($("alpha").value) || 0.05,
+    power: paramsLike.power || Number($("power").value) || 0.8,
+    tail: $("tail").value || "two",
+    ratio: paramsLike.ratio || Number($("ratio").value) || 1,
+    attrition: paramsLike.attrition || Number($("attrition").value) || 10
+  };
+  design.fields.forEach(([key]) => base[key] = paramsLike[key] !== undefined ? Number(paramsLike[key]) : Number($(`param_${key}`).value));
+  const lowParams = { ...base };
+  const highParams = { ...base };
+  let label = "effect-size uncertainty";
+  if (["twoMeans", "pairedMeans"].includes(designKey)) {
+    lowParams.delta = base.delta * 1.25;
+    highParams.delta = base.delta * 0.75;
+    label = "larger vs smaller meaningful difference";
+  } else if (designKey === "anova") {
+    lowParams.f = base.f * 1.25;
+    highParams.f = base.f * 0.75;
+    label = "larger vs smaller Cohen's f";
+  } else if (designKey === "twoProportions") {
+    const diff = Math.abs(base.p2 - base.p1);
+    lowParams.p2 = clamp01(base.p1 + Math.sign(base.p2 - base.p1 || 1) * diff * 1.25);
+    highParams.p2 = clamp01(base.p1 + Math.sign(base.p2 - base.p1 || 1) * diff * 0.75);
+    label = "larger vs smaller proportion difference";
+  } else if (designKey === "survival") {
+    lowParams.hr = base.hr < 1 ? Math.max(0.05, base.hr * 0.85) : base.hr * 1.15;
+    highParams.hr = base.hr < 1 ? Math.min(0.98, base.hr * 1.15) : Math.max(1.02, base.hr * 0.85);
+    label = "stronger vs weaker hazard ratio";
+  } else {
+    return null;
+  }
+  return {
+    label,
+    low: formatResult(design.calc(lowParams), true),
+    high: formatResult(design.calc(highParams), true)
+  };
+}
+
+function clamp01(value) {
+  return Math.max(0.001, Math.min(0.999, value));
+}
+
 function applyLiteratureFallbacks(extracted, designKey, consensus) {
   const out = { ...extracted };
   const refs = getMatchingReferenceEffects(designKey);
-  const fallback = refs.length ? quantile(refs, 0.25) : null;
+  const seedEffects = getCandidateReferences(designKey).map(ref => Number(ref.effect)).filter(value => isFinite(value) && value > 0);
+  const evidence = refs.length ? refs : seedEffects;
+  const fallback = evidence.length ? quantile(evidence, 0.25) : null;
   if (fallback === null) return out;
-  if ((designKey === "twoMeans" || designKey === "pairedMeans") && out.sd && !out.delta) out.delta = round(out.sd * fallback, 3);
-  if (designKey === "anova" && !out.f) out.f = round(fallback, 3);
-  if (designKey === "correlation" && !out.r) out.r = Math.min(0.99, Math.abs(round(fallback, 3)));
-  if (designKey === "survival" && !out.hr && fallback > 0 && fallback < 1) out.hr = round(fallback, 3);
-  if (consensus) consensus.literatureFallback = fallback;
+  let usedFallback = false;
+  if ((designKey === "twoMeans" || designKey === "pairedMeans") && out.sd && !out.delta) { out.delta = round(out.sd * fallback, 3); usedFallback = true; }
+  else if ((designKey === "twoMeans" || designKey === "pairedMeans") && !out.sd && !out.delta) { out.sd = 1; out.delta = round(fallback, 3); usedFallback = true; }
+  if (designKey === "anova" && !out.f) { out.f = round(fallback, 3); usedFallback = true; }
+  if (designKey === "correlation" && !out.r) { out.r = Math.min(0.99, Math.abs(round(fallback, 3))); usedFallback = true; }
+  if (designKey === "survival" && !out.hr && fallback > 0 && fallback < 1) { out.hr = round(fallback, 3); usedFallback = true; }
+  if (designKey === "twoProportions" && !out.p1 && !out.p2 && fallback > 0 && fallback < 1) {
+    out.p1 = 0.5;
+    out.p2 = Math.min(0.95, round(0.5 + fallback, 3));
+    usedFallback = true;
+  }
+  if (consensus && usedFallback) {
+    consensus.literatureFallback = fallback;
+    consensus.literatureSource = refs.length ? "entered similar studies" : "standardized planning benchmark";
+  }
   return out;
 }
 
 function getMatchingReferenceEffects(designKey) {
-  const designName = designs[designKey].name.toLowerCase();
+  const family = designFamily(designKey);
   return state.references
-    .filter(ref => String(ref.design || "").toLowerCase().includes(designName.split(" ")[0]) || designName.includes(String(ref.design || "").toLowerCase().split(" ")[0]))
+    .filter(ref => designFamilyFromText(ref.design) === family)
     .map(ref => Number(ref.effect))
     .filter(value => isFinite(value) && value > 0);
+}
+
+function designFamily(designKey) {
+  return {
+    twoMeans: "continuous",
+    pairedMeans: "continuous",
+    oneMeanPrecision: "continuous",
+    equivalence: "continuous",
+    twoProportions: "proportion",
+    oneProportionPrecision: "proportion",
+    diagnostic: "diagnostic",
+    survival: "survival",
+    anova: "anova",
+    correlation: "correlation",
+    regression: "regression",
+    animalResource: "animal"
+  }[designKey] || designKey;
+}
+
+function designFamilyFromText(text) {
+  const lower = String(text || "").toLowerCase();
+  if (/diagnostic|sensitivity|specificity/.test(lower)) return "diagnostic";
+  if (/survival|time-to-event|hazard|log-rank/.test(lower)) return "survival";
+  if (/anova|cohen'?s?\s*f/.test(lower)) return "anova";
+  if (/proportion|prevalence|rate|binary/.test(lower)) return "proportion";
+  if (/correlation|pearson|spearman/.test(lower)) return "correlation";
+  if (/regression|predictor/.test(lower)) return "regression";
+  if (/resource|animal/.test(lower)) return "animal";
+  if (/mean|continuous|paired|equivalence|non-inferiority/.test(lower)) return "continuous";
+  return "";
 }
 
 function getCandidateReferences(designKey) {
   return literatureSeeds[designKey] || literatureSeeds.twoMeans;
 }
 
-function renderConsensus(consensus, missing) {
+function renderConsensus(consensus, missing, unresolved, range) {
   $("consensusOutput").innerHTML = `
-    <strong>Consensus AI interpretation</strong>
+    <strong>Protocol-first AI interpretation</strong>
+    <span class="tag">${escapeHtml(state.lastConsensus?.aiMode || "Local fallback")}</span>
     <span class="tag">Confidence ${consensus.confidence}%</span>
-    ${consensus.literatureFallback ? `<span class="tag">Literature fallback effect ${consensus.literatureFallback}</span>` : ""}
+    ${consensus.literatureFallback ? `<span class="tag">Literature effect ${consensus.literatureFallback} from ${escapeHtml(consensus.literatureSource)}</span>` : ""}
     <div class="consensus-grid">
       ${consensus.votes.map(vote => `<div class="consensus-card"><strong>${escapeHtml(vote.agent)}</strong><span>${escapeHtml(vote.vote)}</span><p>${escapeHtml(vote.reason)}</p></div>`).join("")}
     </div>
-    ${missing.length ? `<p class="warning-list"><strong>Missing explicit assumptions:</strong> ${missing.map(escapeHtml).join(", ")}. The calculation is provisional until these are confirmed from the protocol, pilot data, or similar studies.</p>` : "<p>All required assumptions for the selected design were found explicitly or derived from paired values.</p>"}
+    ${missing.length ? `<p class="warning-list"><strong>Missing from study text:</strong> ${missing.map(escapeHtml).join(", ")}. ${unresolved.length ? `Still unresolved: ${unresolved.map(escapeHtml).join(", ")}.` : "Filled provisionally from literature/standardized assumptions."}</p>` : "<p>All required calculation assumptions for the selected design were explicit or directly derived.</p>"}
+    ${range ? `<p><strong>Sensitivity check:</strong> ${escapeHtml(range.label)} gives ${escapeHtml(range.low)} to ${escapeHtml(range.high)}. Use this range when literature estimates are uncertain.</p>` : ""}
+    ${consensus.warnings?.length ? `<p class="warning-list"><strong>AI warnings:</strong> ${consensus.warnings.map(escapeHtml).join("; ")}</p>` : ""}
+    ${consensus.similarStudyQueries?.length ? `<p><strong>Suggested literature queries:</strong> ${consensus.similarStudyQueries.map(q => `${escapeHtml(q.database)}: ${escapeHtml(q.query)}`).join(" | ")}</p>` : ""}
   `;
 }
 
@@ -582,15 +869,18 @@ function findSimilarStudies() {
   const designKey = $("design").value || "twoMeans";
   const query = $("literatureQuery").value.trim() || buildLiteratureQuery($("studyText").value || "", designKey);
   $("literatureQuery").value = query;
+  const aiQueries = state.lastConsensus?.similarStudyQueries?.length ? state.lastConsensus.similarStudyQueries : null;
   const encoded = encodeURIComponent(query);
   const candidates = getCandidateReferences(designKey);
   $("similarStudies").innerHTML = `
     <strong>Consensus literature search</strong>
     <p>Open these searches, choose studies with the closest endpoint/model/assay, then add their effect size and sample size below. The app uses matching entered references as literature support for provisional assumptions.</p>
     <p>
-      <a class="tag" target="_blank" rel="noreferrer" href="https://pubmed.ncbi.nlm.nih.gov/?term=${encoded}">PubMed</a>
-      <a class="tag" target="_blank" rel="noreferrer" href="https://www.semanticscholar.org/search?q=${encoded}">Semantic Scholar</a>
-      <a class="tag" target="_blank" rel="noreferrer" href="https://scholar.google.com/scholar?q=${encoded}">Google Scholar</a>
+      ${aiQueries ? aiQueries.map(q => searchLink(q.database, q.query)).join("") : `
+        <a class="tag" target="_blank" rel="noreferrer" href="https://pubmed.ncbi.nlm.nih.gov/?term=${encoded}">PubMed</a>
+        <a class="tag" target="_blank" rel="noreferrer" href="https://www.semanticscholar.org/search?q=${encoded}">Semantic Scholar</a>
+        <a class="tag" target="_blank" rel="noreferrer" href="https://scholar.google.com/scholar?q=${encoded}">Google Scholar</a>
+      `}
     </p>
     <div class="similar-grid">
       ${candidates.map((ref, index) => `<div class="study-card"><strong>${escapeHtml(ref.citation)}</strong><span>${escapeHtml(ref.notes)}</span><p><span class="tag">${escapeHtml(ref.design)}</span><span class="tag">effect ${ref.effect}</span><span class="tag">n ${ref.n}</span></p><button class="ghost" data-seed-ref="${index}">Use as reference</button></div>`).join("")}
@@ -603,6 +893,14 @@ function findSimilarStudies() {
       renderLiteratureSummary();
     });
   });
+}
+
+function searchLink(database, query) {
+  const db = String(database || "").toLowerCase();
+  const encoded = encodeURIComponent(query || "");
+  if (db.includes("pubmed")) return `<a class="tag" target="_blank" rel="noreferrer" href="https://pubmed.ncbi.nlm.nih.gov/?term=${encoded}">PubMed</a>`;
+  if (db.includes("semantic")) return `<a class="tag" target="_blank" rel="noreferrer" href="https://www.semanticscholar.org/search?q=${encoded}">Semantic Scholar</a>`;
+  return `<a class="tag" target="_blank" rel="noreferrer" href="https://scholar.google.com/scholar?q=${encoded}">Google Scholar</a>`;
 }
 
 function setDesign(key) {
@@ -816,7 +1114,7 @@ function renderReport() {
     <h3>Sample Size Recommendation</h3>
     <p>${formatResult(r.result, false)} before attrition. Adjusted total: <strong>${r.adjusted}</strong> with ${r.params.attrition}% attrition.</p>
     <p><strong>Design:</strong> ${r.design}. <strong>Method:</strong> ${r.note}</p>
-    ${state.lastConsensus ? `<h3>Consensus AI Review</h3><p><strong>Confidence:</strong> ${state.lastConsensus.confidence}%. <strong>Missing explicit assumptions:</strong> ${state.lastConsensus.missing.length ? state.lastConsensus.missing.map(escapeHtml).join(", ") : "None for the selected design"}.</p><ul>${state.lastConsensus.votes.map(vote => `<li><strong>${escapeHtml(vote.agent)}:</strong> ${escapeHtml(vote.vote)} - ${escapeHtml(vote.reason)}</li>`).join("")}</ul>` : ""}
+    ${state.lastConsensus ? `<h3>Protocol-First AI Review</h3><p><strong>Analyzer:</strong> ${escapeHtml(state.lastConsensus.aiMode || "Local fallback")}. <strong>Confidence:</strong> ${state.lastConsensus.confidence}%. <strong>Experimental unit:</strong> ${escapeHtml(state.lastConsensus.protocol.unit)}. <strong>Comparison:</strong> ${escapeHtml(state.lastConsensus.protocol.comparison)}. <strong>Missing explicit assumptions:</strong> ${state.lastConsensus.missing.length ? state.lastConsensus.missing.map(escapeHtml).join(", ") : "None for the selected design"}.</p>${state.lastConsensus.range ? `<p><strong>Sensitivity range:</strong> ${escapeHtml(state.lastConsensus.range.label)} = ${escapeHtml(state.lastConsensus.range.low)} to ${escapeHtml(state.lastConsensus.range.high)}.</p>` : ""}<ul>${state.lastConsensus.votes.map(vote => `<li><strong>${escapeHtml(vote.agent)}:</strong> ${escapeHtml(vote.vote)} - ${escapeHtml(vote.reason)}</li>`).join("")}</ul>` : ""}
     <table><tbody>
       <tr><th>Alpha</th><td>${r.params.rawAlpha}</td><th>Adjusted alpha</th><td>${r.params.alpha.toFixed(4)}</td></tr>
       <tr><th>Power</th><td>${r.params.power}</td><th>Tail</th><td>${r.params.tail}</td></tr>

@@ -1,0 +1,15 @@
+{
+  "name": "studysize-pro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Academic sample size planning app with optional Netlify AI analysis function.",
+  "scripts": {
+    "start": "netlify dev",
+    "dev": "netlify dev",
+    "check": "node --check app.js && node --check netlify/functions/analyze-study.js"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.38.1"
+  }
+}
+
